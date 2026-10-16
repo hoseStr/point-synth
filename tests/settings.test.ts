@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { WHEEL_COLORS, WHEEL_COLOR_IDS } from '../src/config';
 import { DEFAULT_SETTINGS, migrateLegacySettings, sanitizeSettings } from '../src/ui/settings';
 
 describe('sanitizeSettings', () => {
@@ -51,5 +52,40 @@ describe('migrateLegacySettings', () => {
     expect(s.controlPoint).toBe('index');
     expect(s.volumeMode).toBe('finger');
     expect(s.wheelSpread).toBe(DEFAULT_SETTINGS.wheelSpread);
+  });
+});
+
+describe('colores de las ruedas', () => {
+  it('hay 6 colores distintos para elegir', () => {
+    expect(WHEEL_COLORS).toHaveLength(6);
+    expect(new Set(WHEEL_COLOR_IDS).size).toBe(6);
+    expect(new Set(WHEEL_COLORS.map((c) => c.rgb.join())).size).toBe(6);
+  });
+
+  it('por defecto: grafito para las notas y azul pizarra para los acordes', () => {
+    expect(DEFAULT_SETTINGS.rootWheelColor).toBe('graphite');
+    expect(DEFAULT_SETTINGS.qualityWheelColor).toBe('slate');
+  });
+
+  it('cada rueda guarda su color y se descartan colores desconocidos', () => {
+    const s = sanitizeSettings({ rootWheelColor: 'wine', qualityWheelColor: 'emerald' });
+    expect(s.rootWheelColor).toBe('wine');
+    expect(s.qualityWheelColor).toBe('emerald');
+    const bad = sanitizeSettings({ rootWheelColor: 'fucsia', qualityWheelColor: 3 });
+    expect(bad.rootWheelColor).toBe(DEFAULT_SETTINGS.rootWheelColor);
+    expect(bad.qualityWheelColor).toBe(DEFAULT_SETTINGS.qualityWheelColor);
+  });
+
+  it('el texto blanco se lee sobre todos los colores (contraste ≥ 4.5 a opacidad máxima)', () => {
+    const luminance = ([r, g, b]: readonly number[]): number => {
+      const lin = (c: number): number => {
+        const v = c / 255;
+        return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * lin(r!) + 0.7152 * lin(g!) + 0.0722 * lin(b!);
+    };
+    for (const c of WHEEL_COLORS) {
+      expect(1.05 / (luminance(c.rgb) + 0.05), c.name).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });

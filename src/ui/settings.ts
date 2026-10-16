@@ -4,7 +4,7 @@
  * funciona igual con los valores por defecto.
  */
 import { isPresetId, type PresetId } from '../audio/presets';
-import { WHEEL } from '../config';
+import { WHEEL, WHEEL_COLOR_IDS, type WheelColor, type WheelColorId } from '../config';
 
 export type ControlPoint = 'palm' | 'index';
 export type VolumeMode = 'finger' | 'openness' | 'pinch';
@@ -27,6 +27,8 @@ export interface Settings {
   /** Distancia del centro de la pantalla al centro de cada rueda, como fracción del ancho. */
   readonly wheelSpread: number;
   readonly wheelOpacity: number;
+  readonly rootWheelColor: WheelColorId;
+  readonly qualityWheelColor: WheelColorId;
   readonly mirror: boolean;
   /** Tónica de la escala resaltada (0 = C), o null para no resaltar. */
   readonly scaleTonic: number | null;
@@ -45,6 +47,8 @@ export const DEFAULT_SETTINGS: Settings = {
   wheelSize: WHEEL.defaultSize,
   wheelSpread: WHEEL.defaultSpread,
   wheelOpacity: 0.55,
+  rootWheelColor: 'graphite',
+  qualityWheelColor: 'slate',
   mirror: true,
   scaleTonic: null,
   scaleMode: 'major',
@@ -80,6 +84,8 @@ export function sanitizeSettings(raw: unknown): Settings {
     wheelSize: num(r.wheelSize, d.wheelSize, WHEEL.minSize, WHEEL.maxSize),
     wheelSpread: num(r.wheelSpread, d.wheelSpread, WHEEL.minSpread, WHEEL.maxSpread),
     wheelOpacity: num(r.wheelOpacity, d.wheelOpacity, 0.15, 0.9),
+    rootWheelColor: oneOf(r.rootWheelColor, WHEEL_COLOR_IDS, d.rootWheelColor),
+    qualityWheelColor: oneOf(r.qualityWheelColor, WHEEL_COLOR_IDS, d.qualityWheelColor),
     mirror: typeof r.mirror === 'boolean' ? r.mirror : d.mirror,
     scaleTonic:
       typeof r.scaleTonic === 'number' && Number.isInteger(r.scaleTonic) && r.scaleTonic >= 0 && r.scaleTonic <= 11
@@ -140,6 +146,7 @@ export interface SettingsPanelOptions {
   readonly noteNames: readonly string[];
   readonly wheelSize: { readonly min: number; readonly max: number };
   readonly wheelSpread: { readonly min: number; readonly max: number };
+  readonly wheelColors: readonly WheelColor[];
 }
 
 /**
@@ -213,6 +220,18 @@ export class SettingsPanel {
       pct,
     );
     this.range('Opacidad', 0.15, 0.9, 0.01, (s) => s.wheelOpacity, (v) => ({ wheelOpacity: v }), pct);
+    this.swatches(
+      'Color de la rueda de notas',
+      options.wheelColors,
+      (s) => s.rootWheelColor,
+      (v) => ({ rootWheelColor: v as WheelColorId }),
+    );
+    this.swatches(
+      'Color de la rueda de acordes',
+      options.wheelColors,
+      (s) => s.qualityWheelColor,
+      (v) => ({ qualityWheelColor: v as WheelColorId }),
+    );
     this.select(
       'Resaltar escala',
       [['none', 'Ninguna'] as const, ...options.noteNames.map((n, i) => [String(i), n] as const)],
@@ -328,6 +347,37 @@ export class SettingsPanel {
       for (const [value, b] of buttons) b.setAttribute('aria-checked', String(read(s) === value));
     });
     this.field(label, group);
+  }
+
+  /** Muestras de color; el nombre del color elegido aparece junto a la etiqueta. */
+  private swatches(
+    label: string,
+    colors: readonly WheelColor[],
+    read: (s: Settings) => string,
+    write: (value: string) => Patch,
+  ): void {
+    const group = el('div', 'swatches');
+    group.setAttribute('role', 'radiogroup');
+    const output = el('output', 'field-value');
+    const buttons = colors.map((color) => {
+      const b = el('button', 'swatch');
+      b.type = 'button';
+      b.setAttribute('role', 'radio');
+      b.setAttribute('aria-label', color.name);
+      b.title = color.name;
+      b.style.setProperty('--swatch', `rgb(${color.rgb.join(', ')})`);
+      b.addEventListener('click', () => this.onChange(write(color.id)));
+      group.append(b);
+      return [color, b] as const;
+    });
+    this.syncers.push((s) => {
+      const selected = read(s);
+      for (const [color, b] of buttons) {
+        b.setAttribute('aria-checked', String(color.id === selected));
+        if (color.id === selected) output.textContent = color.name;
+      }
+    });
+    this.field(label, group, output);
   }
 
   private toggle(label: string, read: (s: Settings) => boolean, write: (value: boolean) => Patch): void {

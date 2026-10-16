@@ -103,6 +103,7 @@ Están en el engranaje, arriba a la derecha, y se guardan en el navegador (`loca
 | Asignar manos por | Auto (handedness con respaldo por posición), solo handedness o solo posición |
 | Video en espejo | Activado por defecto, como un espejo real |
 | Tamaño, separación y opacidad de las ruedas | Por defecto, radio del 26 % del alto, centros al 24 % del ancho a cada lado del centro de la pantalla y 55 % de opacidad |
+| Color de cada rueda | 6 colores a elegir por separado para la rueda de notas y la de acordes: grafito (notas, por defecto), azul pizarra (acordes, por defecto), violeta, esmeralda, vino y ámbar. La lista está en `WHEEL_COLORS`, en `src/config.ts`. |
 | Resaltar escala | Marca con un punto las notas de una tonalidad (p. ej. G mayor). Es solo visual. |
 
 ### Calibración

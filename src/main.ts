@@ -1,7 +1,7 @@
 import './style.css';
 import { AudioEngine } from './audio/engine';
 import { PRESETS, PRESET_IDS } from './audio/presets';
-import { COLORS, HANDS, POINTER_VOLUME, ROOT_LABELS, WHEEL, WHEEL_QUALITIES } from './config';
+import { COLORS, HANDS, POINTER_VOLUME, ROOT_LABELS, WHEEL, WHEEL_COLORS, WHEEL_QUALITIES, wheelColorRgb } from './config';
 import { assignHands } from './input/assign';
 import { ChordController, type ControlState, type LeftInput, type RightInput } from './input/controller';
 import { videoToScreen, type Size } from './input/coords';
@@ -56,6 +56,7 @@ const panel = new SettingsPanel(byId('settings-panel'), byId<HTMLButtonElement>(
   noteNames: ROOT_LABELS,
   wheelSize: { min: WHEEL.minSize, max: WHEEL.maxSize },
   wheelSpread: { min: WHEEL.minSpread, max: WHEEL.maxSpread },
+  wheelColors: WHEEL_COLORS,
 });
 
 type Mode = 'idle' | 'pointer' | 'camera';
@@ -373,7 +374,7 @@ function frame(now: number): void {
     {
       geometry: layout.left,
       labels: ROOT_LABELS,
-      tint: COLORS.rootWheel,
+      tint: wheelColorRgb(settings.rootWheelColor),
       opacity: settings.wheelOpacity,
       active: state.root,
       centerActive: leftSel.kind === 'center',
@@ -383,7 +384,7 @@ function frame(now: number): void {
     {
       geometry: layout.right,
       labels: WHEEL_QUALITIES,
-      tint: COLORS.qualityWheel,
+      tint: wheelColorRgb(settings.qualityWheelColor),
       opacity: settings.wheelOpacity,
       active: state.quality,
       centerActive: rightSel.kind === 'center',

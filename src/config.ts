@@ -56,10 +56,35 @@ export const HANDS = {
 /** Volumen cuando se toca con mouse o touch (no hay mano que lo controle). */
 export const POINTER_VOLUME = 0.9;
 
+export interface WheelColor {
+  readonly id: string;
+  readonly name: string;
+  /** RGB del cuerpo de la rueda; la opacidad la pone el ajuste del usuario. */
+  readonly rgb: readonly [number, number, number];
+}
+
+/**
+ * Colores que se pueden elegir para cada rueda. Son oscuros a propósito: el
+ * texto blanco tiene que leerse sobre cualquier video.
+ */
+export const WHEEL_COLORS = [
+  { id: 'graphite', name: 'Grafito', rgb: [38, 38, 38] },
+  { id: 'slate', name: 'Azul pizarra', rgb: [34, 50, 92] },
+  { id: 'violet', name: 'Violeta', rgb: [74, 42, 112] },
+  { id: 'emerald', name: 'Esmeralda', rgb: [18, 84, 66] },
+  { id: 'wine', name: 'Vino', rgb: [112, 30, 54] },
+  { id: 'amber', name: 'Ámbar', rgb: [122, 74, 18] },
+] as const satisfies readonly WheelColor[];
+
+export type WheelColorId = (typeof WHEEL_COLORS)[number]['id'];
+
+export const WHEEL_COLOR_IDS: readonly WheelColorId[] = WHEEL_COLORS.map((c) => c.id);
+
+export function wheelColorRgb(id: WheelColorId): readonly [number, number, number] {
+  return (WHEEL_COLORS.find((c) => c.id === id) ?? WHEEL_COLORS[0]).rgb;
+}
+
 export const COLORS = {
-  /** RGB de las ruedas; la opacidad la pone el ajuste del usuario. */
-  rootWheel: [38, 38, 38],
-  qualityWheel: [34, 50, 92],
   center: 'rgba(22, 22, 24, 0.92)',
   rim: 'rgba(235, 235, 235, 0.42)',
   separator: 'rgba(255, 255, 255, 0.10)',
