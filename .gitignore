@@ -1,0 +1,8 @@
+node_modules
+dist
+*.local
+.vercel
+.DS_Store
+
+# Foto de referencia: es una persona real, no la publicamos en el repo.
+ejemplo.jpeg
