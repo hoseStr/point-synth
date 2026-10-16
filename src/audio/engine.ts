@@ -1,16 +1,19 @@
 /**
  * Motor de audio con Web Audio nativa.
  *
- * voces → bus → volumen de la mano → delay con realimentación → reverb
- * (convolución con impulso procedural) → limitador → mute/pánico → salida
+ * voces → cadena del preset → bus → volumen de la mano → delay con
+ * realimentación → reverb (sala «room» o «hall», impulsos procedurales) →
+ * limitador → mute/pánico → salida
  *
- * Las voces se crean una vez por preset y se reutilizan; nunca se crean nodos
- * por frame.
+ * Las voces y la cadena se crean una vez por preset y se reutilizan; nunca se
+ * crean nodos por frame.
  */
 import { planVoices } from './allocate';
-import { generateImpulse } from './impulse';
+import { PresetChain } from './chain';
+import { generateImpulse, type ImpulseOptions } from './impulse';
 import { PRESETS, type PresetDef, type PresetId } from './presets';
-import { Voice, holdAt } from './voice';
+import { Voice, holdAt, type VoiceResources } from './voice';
+import { generateNoise, pulseCoefficients, type NoiseColor } from './waves';
 
 export interface EngineOptions {
   readonly preset: PresetId;
@@ -28,7 +31,7 @@ const SPARE_VOICES = 3;
 const MAX_GLIDE_SEMITONES = 4;
 
 export class AudioEngine {
-  readonly ctx: AudioContext;
+  readonly ctx: BaseAudioContext;
   private readonly voiceBus: GainNode;
   private readonly expression: GainNode;
   private readonly delaySend: GainNode;
@@ -41,6 +44,11 @@ export class AudioEngine {
   private readonly vibratoDepth: GainNode;
   private readonly meterBuffer: Float32Array<ArrayBuffer>;
   private readonly poolSize: number;
+  private readonly roomSend: GainNode;
+  private readonly hallSend: GainNode;
+  private readonly pulseWaves = new Map<number, PeriodicWave>();
+  private readonly noiseBuffers = new Map<NoiseColor, AudioBuffer>();
+  private chain: PresetChain | null = null;
 
   private preset: PresetDef;
   private voices: Voice[] = [];
@@ -49,9 +57,9 @@ export class AudioEngine {
   private muted = false;
   private panicked = false;
 
-  constructor(opts: EngineOptions) {
-    this.ctx = new AudioContext({ latencyHint: 'interactive' });
-    const ctx = this.ctx;
+  /** @param ctx contexto a usar; por defecto uno en tiempo real (en pruebas, un OfflineAudioContext). */
+  constructor(opts: EngineOptions, ctx: BaseAudioContext = new AudioContext({ latencyHint: 'interactive' })) {
+    this.ctx = ctx;
     this.preset = PRESETS[opts.preset];
     this.poolSize = opts.maxChordNotes + 1 + SPARE_VOICES;
 
@@ -70,21 +78,23 @@ export class AudioEngine {
     echoTone.connect(this.delayFeedback).connect(delay);
     echoTone.connect(preReverb);
 
-    // Reverb por convolución con un impulso generado.
+    // Reverb por convolución con dos salas generadas por código; el preset elige cuál.
     this.dry = new GainNode(ctx, { gain: 1 });
     this.reverbSend = new GainNode(ctx, { gain: 0 });
-    const [left, right] = generateImpulse(ctx.sampleRate);
-    const impulse = ctx.createBuffer(2, left.length, ctx.sampleRate);
-    impulse.copyToChannel(left, 0);
-    impulse.copyToChannel(right, 1);
-    const convolver = new ConvolverNode(ctx, { buffer: impulse });
+    this.roomSend = new GainNode(ctx, { gain: 1 });
+    this.hallSend = new GainNode(ctx, { gain: 0 });
+    const room = this.makeConvolver({ seconds: 2.8, decay: 3.2 });
+    const hall = this.makeConvolver({ seconds: 6, decay: 2.4, preDelay: 0.03 });
     preReverb.connect(this.dry);
-    preReverb.connect(this.reverbSend).connect(convolver);
+    preReverb.connect(this.reverbSend);
+    this.reverbSend.connect(this.roomSend).connect(room);
+    this.reverbSend.connect(this.hallSend).connect(hall);
 
     // Limitador: compresor con ratio alto y ataque rápido.
     const limiter = new DynamicsCompressorNode(ctx, { threshold: -6, knee: 0, ratio: 20, attack: 0.002, release: 0.2 });
     this.dry.connect(limiter);
-    convolver.connect(limiter);
+    room.connect(limiter);
+    hall.connect(limiter);
 
     this.output = new GainNode(ctx, { gain: 1 });
     this.analyser = new AnalyserNode(ctx, { fftSize: 1024, smoothingTimeConstant: 0 });
@@ -105,7 +115,7 @@ export class AudioEngine {
 
   /** Reanuda el contexto: hay que llamarlo dentro de un gesto del usuario. */
   resume(): Promise<void> {
-    return this.ctx.resume();
+    return this.ctx instanceof AudioContext ? this.ctx.resume() : Promise.resolve();
   }
 
   get presetId(): PresetId {
@@ -221,17 +231,67 @@ export class AudioEngine {
     return Math.min(1, Math.max(0, (db + 60) / 60));
   }
 
-  /** Crea el pool de voces del preset actual; si suena un acorde, pasa a las voces nuevas con crossfade. */
+  /**
+   * Crea la cadena y el pool de voces del preset actual. La cadena y las voces
+   * viejas hacen un fundido; si suena un acorde, pasa a las voces nuevas.
+   */
   private buildVoices(): void {
     const t = this.ctx.currentTime;
+    const preset = this.preset;
     for (const v of this.voices) v.dispose(t);
-    const vibrato = this.preset.vibrato;
+    this.chain?.dispose(t);
+    const chain = new PresetChain(this.ctx, preset, this.voiceBus);
+    this.chain = chain;
+
+    const vibrato = preset.vibrato;
     this.vibratoLfo.frequency.setTargetAtTime(vibrato?.rate ?? 5, t, 0.05);
     this.vibratoDepth.gain.setTargetAtTime(vibrato?.depthCents ?? 0, t, 0.05);
-    this.voices = Array.from({ length: this.poolSize }, () => new Voice(this.ctx, this.preset, this.voiceBus, this.vibratoDepth));
+    const hall = preset.space === 'hall';
+    this.roomSend.gain.setTargetAtTime(hall ? 0 : 1, t, 0.3);
+    this.hallSend.gain.setTargetAtTime(hall ? 1 : 0, t, 0.3);
+
+    const resources = this.voiceResources(chain.filterLfo);
+    this.voices = Array.from(
+      { length: this.poolSize },
+      () => new Voice(this.ctx, preset, chain.input, this.vibratoDepth, resources),
+    );
     const chord = this.chord;
     this.chord = null;
     if (chord) this.setChord(chord.bass, chord.notes);
+  }
+
+  private makeConvolver(opts: ImpulseOptions): ConvolverNode {
+    const [left, right] = generateImpulse(this.ctx.sampleRate, opts);
+    const impulse = this.ctx.createBuffer(2, left.length, this.ctx.sampleRate);
+    impulse.copyToChannel(left, 0);
+    impulse.copyToChannel(right, 1);
+    return new ConvolverNode(this.ctx, { buffer: impulse });
+  }
+
+  /** Ondas de pulso y buffers de ruido se crean una sola vez y se comparten entre voces y presets. */
+  private voiceResources(filterLfo: AudioNode | null): VoiceResources {
+    return {
+      filterLfo,
+      pulseWave: (width) => {
+        let wave = this.pulseWaves.get(width);
+        if (!wave) {
+          const { real, imag } = pulseCoefficients(width);
+          wave = this.ctx.createPeriodicWave(real, imag);
+          this.pulseWaves.set(width, wave);
+        }
+        return wave;
+      },
+      noiseBuffer: (color) => {
+        let buffer = this.noiseBuffers.get(color);
+        if (!buffer) {
+          const length = this.ctx.sampleRate * 2;
+          buffer = this.ctx.createBuffer(1, length, this.ctx.sampleRate);
+          buffer.copyToChannel(generateNoise(length, color), 0);
+          this.noiseBuffers.set(color, buffer);
+        }
+        return buffer;
+      },
+    };
   }
 
   private levelFor(note: number, bass: number): number {

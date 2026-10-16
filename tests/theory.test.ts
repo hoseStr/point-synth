@@ -98,7 +98,7 @@ describe('escalas', () => {
     expect(scalePitchClasses(G, 'major')).toEqual([7, 9, 11, 0, 2, 4, 6]);
   });
   it('A menor natural', () => {
-    expect(scalePitchClasses(A, 'minor')).toEqual([9, 11, 0, 2, 4, 5, 7]);
+    expect(scalePitchClasses(A, 'aeolian')).toEqual([9, 11, 0, 2, 4, 5, 7]);
   });
 });
 

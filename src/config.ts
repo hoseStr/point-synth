@@ -1,14 +1,24 @@
-import type { QualityId } from './music/theory';
+import type { QualityId } from './music/chords';
+import type { DegreeTypeId } from './music/diatonic';
 
 /** Etiquetas de la rueda de raíces: orden cromático en sentido horario, C arriba. */
 export const ROOT_LABELS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
 
+/** Nombres de tónica para los selectores: las dos grafías en las teclas negras. */
+export const TONIC_NAMES = ['C', 'C♯ / D♭', 'D', 'D♯ / E♭', 'E', 'F', 'F♯ / G♭', 'G', 'G♯ / A♭', 'A', 'A♯ / B♭', 'B'] as const;
+
 /**
- * Calidades de la rueda derecha, en sentido horario desde arriba.
- * Para cambiar la rueda basta con editar este array; las calidades
- * disponibles están en QUALITY_DEFS (src/music/theory.ts).
+ * Rueda derecha por defecto en modo libre, en sentido horario desde arriba.
+ * Desde la app se edita en Ajustes → Armonía; el catálogo completo está en
+ * src/music/chords.ts.
  */
-export const WHEEL_QUALITIES: readonly QualityId[] = ['maj', 'm', '7', 'maj7', 'm7', 'dim', 'aug', 'sus4'];
+export const DEFAULT_WHEEL_CHORDS: readonly QualityId[] = ['maj', 'm', '7', 'maj7', 'm7', 'dim', 'aug', 'sus4'];
+
+/** Rueda derecha por defecto en modo por grados (tipos de src/music/diatonic.ts). */
+export const DEFAULT_DEGREE_TYPES: readonly DegreeTypeId[] = ['triad', 'seventh', 'ninth', 'sus2', 'sus4', 'add9', 'sixth'];
+
+/** Cuántos acordes puede tener la rueda derecha. */
+export const WHEEL_LIMITS = { min: 2, max: 12 } as const;
 
 /** Geometría de las ruedas. Las fracciones son relativas al radio salvo que se indique. */
 export const WHEEL = {
@@ -89,6 +99,7 @@ export const COLORS = {
   rim: 'rgba(235, 235, 235, 0.42)',
   separator: 'rgba(255, 255, 255, 0.10)',
   label: 'rgba(255, 255, 255, 0.95)',
+  sublabel: 'rgba(255, 255, 255, 0.72)',
   activeFill: 'rgba(255, 255, 255, 0.20)',
   activeStroke: 'rgba(255, 255, 255, 0.70)',
   scaleDot: 'rgba(255, 214, 120, 0.95)',

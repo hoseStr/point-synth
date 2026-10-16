@@ -8,41 +8,13 @@
  * - Los nombres internos usan ASCII ("Eb", "F#", "Bbb"); `formatNote` los pasa a ♭/♯.
  */
 
-export interface QualityDef {
-  /** Semitonos desde la raíz. */
-  readonly intervals: readonly number[];
-  /** Grado de cada intervalo (1 = raíz, 3 = tercera…); decide la letra al escribir la nota. */
-  readonly degrees: readonly number[];
-  /** Sufijo en el nombre del acorde ("" para mayor). */
-  readonly suffix: string;
-}
+import { CHORDS, voicingIntervals, type QualityId } from './chords';
+import { SCALES, type ScaleId } from './scales';
 
-export const QUALITY_DEFS = {
-  maj: { intervals: [0, 4, 7], degrees: [1, 3, 5], suffix: '' },
-  m: { intervals: [0, 3, 7], degrees: [1, 3, 5], suffix: 'm' },
-  '7': { intervals: [0, 4, 7, 10], degrees: [1, 3, 5, 7], suffix: '7' },
-  maj7: { intervals: [0, 4, 7, 11], degrees: [1, 3, 5, 7], suffix: 'maj7' },
-  m7: { intervals: [0, 3, 7, 10], degrees: [1, 3, 5, 7], suffix: 'm7' },
-  dim: { intervals: [0, 3, 6], degrees: [1, 3, 5], suffix: 'dim' },
-  aug: { intervals: [0, 4, 8], degrees: [1, 3, 5], suffix: 'aug' },
-  sus4: { intervals: [0, 5, 7], degrees: [1, 4, 5], suffix: 'sus4' },
-  // Extras: no están en la rueda por defecto, pero se pueden añadir en config.ts.
-  sus2: { intervals: [0, 2, 7], degrees: [1, 2, 5], suffix: 'sus2' },
-  '6': { intervals: [0, 4, 7, 9], degrees: [1, 3, 5, 6], suffix: '6' },
-  m6: { intervals: [0, 3, 7, 9], degrees: [1, 3, 5, 6], suffix: 'm6' },
-  dim7: { intervals: [0, 3, 6, 9], degrees: [1, 3, 5, 7], suffix: 'dim7' },
-  m7b5: { intervals: [0, 3, 6, 10], degrees: [1, 3, 5, 7], suffix: 'm7b5' },
-  add9: { intervals: [0, 4, 7, 14], degrees: [1, 3, 5, 9], suffix: 'add9' },
-} as const satisfies Record<string, QualityDef>;
-
-export type QualityId = keyof typeof QUALITY_DEFS;
-
-export function isQualityId(value: string): value is QualityId {
-  return Object.prototype.hasOwnProperty.call(QUALITY_DEFS, value);
-}
+export { CHORDS, isQualityId, type QualityId } from './chords';
 
 export function chordIntervals(quality: QualityId): readonly number[] {
-  return QUALITY_DEFS[quality].intervals;
+  return CHORDS[quality].intervals;
 }
 
 /** Normaliza cualquier entero a 0..11. */
@@ -50,14 +22,23 @@ export function pc(n: number): number {
   return ((n % 12) + 12) % 12;
 }
 
-/** Clases de altura del acorde, en el orden de sus intervalos (raíz primero), sin repetir. */
-export function chordPitchClasses(root: number, quality: QualityId): number[] {
+function uniquePitchClasses(root: number, intervals: readonly number[]): number[] {
   const out: number[] = [];
-  for (const i of chordIntervals(quality)) {
+  for (const i of intervals) {
     const p = pc(root + i);
     if (!out.includes(p)) out.push(p);
   }
   return out;
+}
+
+/** Clases de altura del acorde, en el orden de sus intervalos (raíz primero), sin repetir. */
+export function chordPitchClasses(root: number, quality: QualityId): number[] {
+  return uniquePitchClasses(root, chordIntervals(quality));
+}
+
+/** Las que realmente suenan: con 5 o más notas se omite la quinta (ver voicingIntervals). */
+export function voicingPitchClasses(root: number, quality: QualityId): number[] {
+  return uniquePitchClasses(root, voicingIntervals(quality));
 }
 
 // ---------------------------------------------------------------------------
@@ -67,7 +48,7 @@ export function chordPitchClasses(root: number, quality: QualityId): number[] {
 const LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'] as const;
 const LETTER_PCS = [0, 2, 4, 5, 7, 9, 11] as const;
 
-interface SpelledNote {
+export interface SpelledNote {
   /** Índice en LETTERS. */
   readonly letter: number;
   /** Alteración en semitonos: -2 (bb) … +2 (##). */
@@ -124,6 +105,40 @@ function readabilityCost(notes: readonly SpelledNote[]): number {
   return cost;
 }
 
+/**
+ * Grafía de las 7 notas de una escala, con letras consecutivas desde la tónica
+ * (en Eb mayor: Eb F G Ab Bb C D). Sirve de contexto para escribir los acordes
+ * de la tonalidad con sus letras: el IV de Eb mayor es Ab, no G#.
+ */
+export type KeySpelling = readonly SpelledNote[];
+
+/**
+ * Escribe una escala de 7 notas con una letra por grado, eligiendo la grafía de
+ * la tónica con menos alteraciones (Db mayor antes que C# mayor). Si empatan,
+ * gana el sostenido. Para escalas que no tienen 7 notas devuelve null.
+ */
+export function spellScale(tonic: number, steps: readonly number[]): KeySpelling | null {
+  if (steps.length !== 7) return null;
+  let best: { notes: SpelledNote[]; cost: number } | null = null;
+  for (const t of rootSpellings(pc(tonic))) {
+    const notes = steps.map((step, degree) => spellInterval(t, step, degree + 1));
+    if (notes.some((n) => Math.abs(n.accidental) > 2)) continue;
+    const cost = readabilityCost(notes);
+    if (best === null || cost < best.cost) best = { notes, cost };
+  }
+  return best?.notes ?? null;
+}
+
+/** Grafía de una tonalidad del catálogo, o null si la escala no tiene 7 notas. */
+export function keySpelling(tonic: number, scale: ScaleId): KeySpelling | null {
+  return spellScale(tonic, SCALES[scale].steps);
+}
+
+/** Nombre ASCII de una nota deletreada: "Eb", "F#", "E#"… */
+export function spelledNoteName(note: SpelledNote): string {
+  return spelledName(note);
+}
+
 export interface SpelledChord {
   /** Nombre de la raíz elegida, p. ej. "Bb" para A# mayor. */
   readonly root: string;
@@ -132,14 +147,17 @@ export interface SpelledChord {
 }
 
 /**
- * Escribe el acorde con la ortografía correcta (cada grado con su letra) y, en
- * teclas negras, con la grafía de raíz más legible. Si empatan, gana el
- * sostenido, que es como aparece en la rueda.
+ * Escribe el acorde con la ortografía correcta (cada grado con su letra).
+ *
+ * Si se da una tonalidad y la raíz pertenece a ella, la raíz toma la letra de
+ * la escala. Si no, en teclas negras se elige la grafía de raíz más legible y,
+ * si empatan, el sostenido, que es como aparece en la rueda.
  */
-export function spellChord(root: number, quality: QualityId): SpelledChord {
-  const def = QUALITY_DEFS[quality];
+export function spellChord(root: number, quality: QualityId, key: KeySpelling | null = null): SpelledChord {
+  const def = CHORDS[quality];
+  const inKey = key?.find((n) => spelledPc(n) === pc(root));
   let best: { root: SpelledNote; notes: SpelledNote[]; cost: number } | null = null;
-  for (const r of rootSpellings(pc(root))) {
+  for (const r of inKey ? [inKey] : rootSpellings(pc(root))) {
     const notes = def.intervals.map((iv, k) => spellInterval(r, iv, def.degrees[k]!));
     const cost = readabilityCost(notes);
     if (best === null || cost < best.cost) best = { root: r, notes, cost };
@@ -150,13 +168,13 @@ export function spellChord(root: number, quality: QualityId): SpelledChord {
 }
 
 /** Nombre del acorde: "C", "Cm", "G7", "Bdim", "Bb"… */
-export function chordName(root: number, quality: QualityId): string {
-  return spellChord(root, quality).root + QUALITY_DEFS[quality].suffix;
+export function chordName(root: number, quality: QualityId, key: KeySpelling | null = null): string {
+  return spellChord(root, quality, key).root + CHORDS[quality].suffix;
 }
 
 /** Nombres de las notas del acorde con la ortografía correcta: Cm → ["C", "Eb", "G"]. */
-export function chordNotes(root: number, quality: QualityId): string[] {
-  return [...spellChord(root, quality).notes];
+export function chordNotes(root: number, quality: QualityId, key: KeySpelling | null = null): string[] {
+  return [...spellChord(root, quality, key).notes];
 }
 
 /** Convierte "Eb", "F#", "Bbb", "F##" a la forma tipográfica con ♭ ♯ 𝄫 𝄪. */
@@ -164,26 +182,29 @@ export function formatNote(name: string): string {
   return name.replace(/##/g, '𝄪').replace(/#/g, '♯').replace(/bb/g, '𝄫').replace(/b/g, '♭');
 }
 
-/** Formatea un nombre de acorde completo: solo toca las alteraciones de la raíz. */
+/** Formatea las alteraciones de un sufijo: "m7b5" → "m7♭5", "7#9" → "7♯9". */
+export function formatSuffix(suffix: string): string {
+  return suffix.replace(/([#b])(?=\d)/g, (s) => (s === '#' ? '♯' : '♭'));
+}
+
+/** Formatea un nombre de acorde completo: la raíz ("Bb" → "B♭") y el sufijo ("m7b5" → "m7♭5"). */
 export function formatChordName(name: string): string {
   const match = /^([A-G](?:##|#|bb|b)?)(.*)$/.exec(name);
   if (!match) return name;
-  return formatNote(match[1]!) + match[2]!;
+  return formatNote(match[1]!) + formatSuffix(match[2]!);
+}
+
+/** Etiqueta de una calidad en la rueda: el sufijo formateado, o "maj" para la tríada mayor. */
+export function qualityLabel(quality: QualityId): string {
+  return formatSuffix(CHORDS[quality].suffix) || 'maj';
 }
 
 // ---------------------------------------------------------------------------
-// Escalas (solo visual)
+// Escalas
 // ---------------------------------------------------------------------------
 
-export type ScaleMode = 'major' | 'minor';
-
-const SCALE_STEPS: Record<ScaleMode, readonly number[]> = {
-  major: [0, 2, 4, 5, 7, 9, 11],
-  minor: [0, 2, 3, 5, 7, 8, 10],
-};
-
-export function scalePitchClasses(tonic: number, mode: ScaleMode): number[] {
-  return SCALE_STEPS[mode].map((s) => pc(tonic + s));
+export function scalePitchClasses(tonic: number, scale: ScaleId): number[] {
+  return SCALES[scale].steps.map((s) => pc(tonic + s));
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +289,7 @@ export function voiceChord(
   previous: readonly number[] | null,
   baseOctave: number,
 ): Voicing {
-  const pcs = chordPitchClasses(root, quality);
+  const pcs = voicingPitchClasses(root, quality);
   const baseC = octaveStart(baseOctave);
   const lowMin = baseC - LOWEST_NOTE_RANGE.below;
   const lowMax = baseC + LOWEST_NOTE_RANGE.above;
@@ -292,7 +313,7 @@ export function voiceChord(
   const notes = best!.notes;
   const rootNote = notes.find((n) => pc(n) === pc(root))!;
   let bass = rootNote - 12;
-  // Con acordes de más de una octava (add9) el bajo debe seguir quedando abajo.
+  // Con acordes de más de una octava (add9, extendidos) el bajo debe seguir quedando abajo.
   while (bass >= notes[0]!) bass -= 12;
   return { notes, bass };
 }

@@ -4,12 +4,25 @@
  * funciona igual con los valores por defecto.
  */
 import { isPresetId, type PresetId } from '../audio/presets';
-import { WHEEL, WHEEL_COLOR_IDS, type WheelColor, type WheelColorId } from '../config';
+import {
+  DEFAULT_DEGREE_TYPES,
+  DEFAULT_WHEEL_CHORDS,
+  WHEEL,
+  WHEEL_COLOR_IDS,
+  WHEEL_LIMITS,
+  type WheelColor,
+  type WheelColorId,
+} from '../config';
+import { CHORDS, CHORD_CATEGORIES, QUALITY_IDS, isQualityId, type QualityId } from '../music/chords';
+import { DEGREE_TYPES, DEGREE_TYPE_IDS, isDegreeTypeId, type DegreeTypeId } from '../music/diatonic';
+import { SCALES, SCALE_GROUPS, SCALE_IDS, isScaleId, type ScaleId } from '../music/scales';
+import { qualityLabel } from '../music/theory';
 
 export type ControlPoint = 'palm' | 'index';
 export type VolumeMode = 'finger' | 'openness' | 'pinch';
 export type HandAssignment = 'auto' | 'handedness' | 'position';
-export type ScaleModeSetting = 'major' | 'minor';
+/** Libre: raíz cromática + acorde elegido. Por grados: grado de la tonalidad + tipo de acorde. */
+export type HarmonyMode = 'free' | 'degrees';
 
 export interface Settings {
   readonly preset: PresetId;
@@ -30,9 +43,14 @@ export interface Settings {
   readonly rootWheelColor: WheelColorId;
   readonly qualityWheelColor: WheelColorId;
   readonly mirror: boolean;
-  /** Tónica de la escala resaltada (0 = C), o null para no resaltar. */
-  readonly scaleTonic: number | null;
-  readonly scaleMode: ScaleModeSetting;
+  readonly harmonyMode: HarmonyMode;
+  /** Tónica de la tonalidad (0 = C), o null si no hay tonalidad elegida. */
+  readonly keyTonic: number | null;
+  readonly keyScale: ScaleId;
+  /** Acordes de la rueda derecha en modo libre, en sentido horario. */
+  readonly wheelChords: readonly QualityId[];
+  /** Tipos de acorde de la rueda derecha en modo por grados. */
+  readonly wheelDegreeTypes: readonly DegreeTypeId[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -50,8 +68,11 @@ export const DEFAULT_SETTINGS: Settings = {
   rootWheelColor: 'graphite',
   qualityWheelColor: 'slate',
   mirror: true,
-  scaleTonic: null,
-  scaleMode: 'major',
+  harmonyMode: 'free',
+  keyTonic: null,
+  keyScale: 'major',
+  wheelChords: DEFAULT_WHEEL_CHORDS,
+  wheelDegreeTypes: DEFAULT_DEGREE_TYPES,
 };
 
 const STORAGE_KEY = 'wheel-synth:settings:v2';
@@ -68,10 +89,33 @@ function oneOf<T extends string>(value: unknown, options: readonly T[], fallback
   return typeof value === 'string' && (options as readonly string[]).includes(value) ? (value as T) : fallback;
 }
 
+function tonic(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 11 ? value : null;
+}
+
+/**
+ * Valida la lista de una rueda: quita ids desconocidos y repetidos y respeta el
+ * máximo. Si quedan menos de WHEEL_LIMITS.min, vuelve la lista por defecto.
+ */
+export function sanitizeWheelList<T extends string>(
+  value: unknown,
+  isValid: (v: unknown) => v is T,
+  fallback: readonly T[],
+): readonly T[] {
+  if (!Array.isArray(value)) return fallback;
+  const list = [...new Set(value.filter(isValid))].slice(0, WHEEL_LIMITS.max);
+  return list.length >= WHEEL_LIMITS.min ? list : fallback;
+}
+
 /** Valida datos de origen desconocido (p. ej. localStorage) y completa con los valores por defecto. */
 export function sanitizeSettings(raw: unknown): Settings {
   const r = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
   const d = DEFAULT_SETTINGS;
+  // Versiones anteriores guardaban scaleTonic y scaleMode ('major' | 'minor').
+  const keyTonic = r.keyTonic !== undefined ? tonic(r.keyTonic) : tonic(r.scaleTonic);
+  const keyScale: ScaleId = isScaleId(r.keyScale) ? r.keyScale : r.scaleMode === 'minor' ? 'aeolian' : d.keyScale;
+  // Por grados exige una tonalidad y una escala que lo admita.
+  const wantsDegrees = r.harmonyMode === 'degrees' && SCALES[keyScale].degrees;
   return {
     preset: isPresetId(r.preset) ? r.preset : d.preset,
     baseOctave: num(r.baseOctave, d.baseOctave, 2, 5, true),
@@ -87,11 +131,11 @@ export function sanitizeSettings(raw: unknown): Settings {
     rootWheelColor: oneOf(r.rootWheelColor, WHEEL_COLOR_IDS, d.rootWheelColor),
     qualityWheelColor: oneOf(r.qualityWheelColor, WHEEL_COLOR_IDS, d.qualityWheelColor),
     mirror: typeof r.mirror === 'boolean' ? r.mirror : d.mirror,
-    scaleTonic:
-      typeof r.scaleTonic === 'number' && Number.isInteger(r.scaleTonic) && r.scaleTonic >= 0 && r.scaleTonic <= 11
-        ? r.scaleTonic
-        : null,
-    scaleMode: oneOf(r.scaleMode, ['major', 'minor'], d.scaleMode),
+    harmonyMode: wantsDegrees ? 'degrees' : 'free',
+    keyTonic: wantsDegrees ? (keyTonic ?? 0) : keyTonic,
+    keyScale,
+    wheelChords: sanitizeWheelList(r.wheelChords, isQualityId, d.wheelChords),
+    wheelDegreeTypes: sanitizeWheelList(r.wheelDegreeTypes, isDegreeTypeId, d.wheelDegreeTypes),
   };
 }
 
@@ -130,7 +174,8 @@ export function saveSettings(settings: Settings): void {
 // ---------------------------------------------------------------------------
 
 type Patch = Partial<Settings>;
-type Options = readonly (readonly [value: string, label: string])[];
+/** Opciones de un selector; el tercer elemento, si está, agrupa en <optgroup>. */
+type Options = readonly (readonly [value: string, label: string, group?: string])[];
 
 let fieldCounter = 0;
 
@@ -141,9 +186,39 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
   return node;
 }
 
+function button(text: string, className: string, onClick: () => void, ariaLabel?: string): HTMLButtonElement {
+  const b = el('button', className, text);
+  b.type = 'button';
+  if (ariaLabel) b.setAttribute('aria-label', ariaLabel);
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+/** Algo que se puede poner en la rueda derecha desde el editor. */
+interface WheelItem {
+  readonly id: string;
+  readonly label: string;
+  readonly name: string;
+  readonly group: string;
+}
+
+const CHORD_ITEMS: readonly WheelItem[] = QUALITY_IDS.map((id) => ({
+  id,
+  label: qualityLabel(id),
+  name: CHORDS[id].name,
+  group: CHORD_CATEGORIES[CHORDS[id].category],
+}));
+
+const DEGREE_ITEMS: readonly WheelItem[] = DEGREE_TYPE_IDS.map((id) => ({
+  id,
+  label: DEGREE_TYPES[id].label,
+  name: DEGREE_TYPES[id].name,
+  group: 'Tipos de acorde dentro de la tonalidad',
+}));
+
 export interface SettingsPanelOptions {
-  readonly presets: readonly { readonly id: string; readonly name: string }[];
-  readonly noteNames: readonly string[];
+  readonly presets: readonly { readonly id: string; readonly name: string; readonly group: string }[];
+  readonly tonicNames: readonly string[];
   readonly wheelSize: { readonly min: number; readonly max: number };
   readonly wheelSpread: { readonly min: number; readonly max: number };
   readonly wheelColors: readonly WheelColor[];
@@ -156,6 +231,11 @@ export interface SettingsPanelOptions {
  */
 export class SettingsPanel {
   private readonly syncers: ((s: Settings) => void)[] = [];
+  private readonly body: HTMLElement;
+  private readonly editor: HTMLElement;
+  private readonly editButton: HTMLButtonElement;
+  private current: Settings;
+  private editing = false;
 
   constructor(
     private readonly panel: HTMLElement,
@@ -164,27 +244,73 @@ export class SettingsPanel {
     private readonly onChange: (patch: Patch) => void,
     options: SettingsPanelOptions,
   ) {
+    this.current = initial;
     const pct = (v: number): string => `${Math.round(v * 100)} %`;
 
     const header = el('div', 'panel-header');
     header.append(el('h2', '', 'Ajustes'));
-    const close = el('button', 'panel-close', '×');
-    close.type = 'button';
-    close.setAttribute('aria-label', 'Cerrar ajustes');
-    close.addEventListener('click', () => this.setOpen(false));
-    header.append(close);
-    panel.append(header);
+    header.append(button('×', 'panel-close', () => this.setOpen(false), 'Cerrar ajustes'));
+    this.body = el('div', 'panel-body');
+    this.editor = el('div', 'panel-editor');
+    this.editor.hidden = true;
+    panel.append(header, this.body, this.editor);
 
     this.section('Sonido');
     this.select(
       'Preset',
-      options.presets.map((p) => [p.id, p.name] as const),
+      options.presets.map((p) => [p.id, p.name, p.group] as const),
       (s) => s.preset,
       (v) => ({ preset: v as Settings['preset'] }),
     );
     this.range('Octava base', 2, 5, 1, (s) => s.baseOctave, (v) => ({ baseOctave: v }), String);
     this.range('Reverb', 0, 1, 0.01, (s) => s.reverb, (v) => ({ reverb: v }), pct);
     this.range('Delay', 0, 1, 0.01, (s) => s.delay, (v) => ({ delay: v }), pct);
+
+    this.section('Armonía');
+    const modeButtons = this.segmented(
+      'Modo',
+      [['free', 'Libre'], ['degrees', 'Por grados']],
+      (s) => s.harmonyMode,
+      (v) => this.harmonyPatch(v as HarmonyMode),
+    );
+    this.syncers.push((s) => {
+      const degreesButton = modeButtons.find(([value]) => value === 'degrees')![1];
+      const supported = SCALES[s.keyScale].degrees;
+      degreesButton.disabled = !supported;
+      degreesButton.title = supported ? '' : 'Esta escala no admite tocar por grados';
+    });
+    this.select(
+      'Tonalidad',
+      [['none', 'Ninguna'] as const, ...options.tonicNames.map((n, i) => [String(i), n] as const)],
+      (s) => (s.keyTonic === null ? 'none' : String(s.keyTonic)),
+      (v) => (v === 'none' ? { keyTonic: null, harmonyMode: 'free' } : { keyTonic: Number(v) }),
+    );
+    this.select(
+      'Escala',
+      SCALE_IDS.map((id) => [id, SCALES[id].name, SCALE_GROUPS[SCALES[id].group]] as const),
+      (s) => s.keyScale,
+      (v) => ({ keyScale: v as ScaleId, ...(SCALES[v as ScaleId].degrees ? {} : { harmonyMode: 'free' as const }) }),
+    );
+    const note = el('p', 'panel-note');
+    this.body.append(note);
+    this.syncers.push((s) => {
+      const scale = SCALES[s.keyScale];
+      let text = scale.description;
+      if (!scale.degrees) {
+        text += ' Solo marca sus notas: para tocar por grados elige una escala de 7 notas (mayor, menor o un modo).';
+      } else if (s.harmonyMode === 'free' && s.keyTonic === null) {
+        text += ' Elige una tonalidad para marcar sus notas en la rueda.';
+      }
+      note.textContent = text;
+    });
+    this.editButton = button('', 'secondary edit-wheel', () => this.openEditor());
+    this.body.append(this.editButton);
+    this.syncers.push((s) => {
+      const degrees = s.harmonyMode === 'degrees';
+      const count = (degrees ? s.wheelDegreeTypes : s.wheelChords).length;
+      const what = degrees ? 'Editar tipos de acorde' : 'Editar rueda de acordes';
+      this.editButton.textContent = `${what} (${count}/${WHEEL_LIMITS.max})`;
+    });
 
     this.section('Manos');
     this.range('Suavizado', 0, 1, 0.01, (s) => s.smoothing, (v) => ({ smoothing: v }), pct);
@@ -232,35 +358,24 @@ export class SettingsPanel {
       (s) => s.qualityWheelColor,
       (v) => ({ qualityWheelColor: v as WheelColorId }),
     );
-    this.select(
-      'Resaltar escala',
-      [['none', 'Ninguna'] as const, ...options.noteNames.map((n, i) => [String(i), n] as const)],
-      (s) => (s.scaleTonic === null ? 'none' : String(s.scaleTonic)),
-      (v) => ({ scaleTonic: v === 'none' ? null : Number(v) }),
-    );
-    this.segmented(
-      'Tipo de escala',
-      [['major', 'Mayor'], ['minor', 'Menor']],
-      (s) => s.scaleMode,
-      (v) => ({ scaleMode: v as ScaleModeSetting }),
-    );
 
     const footer = el('div', 'panel-footer');
-    const reset = el('button', 'secondary', 'Restablecer valores');
-    reset.type = 'button';
-    reset.addEventListener('click', () => this.onChange({ ...DEFAULT_SETTINGS }));
-    footer.append(reset);
-    panel.append(footer);
+    footer.append(button('Restablecer valores', 'secondary', () => this.onChange({ ...DEFAULT_SETTINGS })));
+    this.body.append(footer);
 
     toggleButton.addEventListener('click', () => this.setOpen(!this.isOpen));
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && this.isOpen) this.setOpen(false);
+      if (e.key !== 'Escape' || !this.isOpen) return;
+      if (this.editing) this.closeEditor();
+      else this.setOpen(false);
     });
     this.sync(initial);
   }
 
   sync(settings: Settings): void {
+    this.current = settings;
     for (const s of this.syncers) s(settings);
+    if (this.editing) this.renderEditor();
   }
 
   get isOpen(): boolean {
@@ -270,10 +385,117 @@ export class SettingsPanel {
   setOpen(open: boolean): void {
     this.panel.hidden = !open;
     this.toggleButton.setAttribute('aria-expanded', String(open));
+    if (!open && this.editing) this.closeEditor();
   }
 
+  /** Pasar a «Por grados» sin tonalidad elegida usa C. */
+  private harmonyPatch(mode: HarmonyMode): Patch {
+    if (mode === 'free') return { harmonyMode: 'free' };
+    return { harmonyMode: 'degrees', keyTonic: this.current.keyTonic ?? 0 };
+  }
+
+  // -------------------------------------------------------------------------
+  // Editor de la rueda derecha
+  // -------------------------------------------------------------------------
+
+  private openEditor(): void {
+    this.editing = true;
+    this.body.hidden = true;
+    this.editor.hidden = false;
+    this.renderEditor();
+    this.editor.querySelector<HTMLElement>('[data-focus="back"]')?.focus();
+  }
+
+  private closeEditor(): void {
+    this.editing = false;
+    this.editor.hidden = true;
+    this.body.hidden = false;
+    this.editButton.focus();
+  }
+
+  /**
+   * Redibuja el editor con la lista actual. Se rehace entero en cada cambio,
+   * así que conserva el foco del teclado por su clave `data-focus`.
+   */
+  private renderEditor(): void {
+    const s = this.current;
+    const degrees = s.harmonyMode === 'degrees';
+    const list: readonly string[] = degrees ? s.wheelDegreeTypes : s.wheelChords;
+    const catalog = degrees ? DEGREE_ITEMS : CHORD_ITEMS;
+    const byId = new Map(catalog.map((item) => [item.id, item]));
+    const commit = (next: readonly string[]): void =>
+      this.onChange(degrees ? { wheelDegreeTypes: next as DegreeTypeId[] } : { wheelChords: next as QualityId[] });
+    const focused = (document.activeElement as HTMLElement | null)?.dataset.focus;
+    const keyed = <T extends HTMLElement>(node: T, key: string): T => {
+      node.dataset.focus = key;
+      return node;
+    };
+
+    const top = el('div', 'editor-top');
+    top.append(keyed(button('← Volver', 'editor-back', () => this.closeEditor()), 'back'));
+    top.append(el('h3', 'editor-title', degrees ? 'Tipos de acorde (por grados)' : 'Acordes de la rueda'));
+
+    let hintText = `${list.length} de ${WHEEL_LIMITS.max}, en sentido horario desde arriba. Mínimo ${WHEEL_LIMITS.min}.`;
+    if (degrees) hintText += ' Cada tipo se arma con notas de la tonalidad; si no existe en ese grado, suena la tríada.';
+    const hint = el('p', 'panel-note', hintText);
+
+    const ol = el('ol', 'wheel-list');
+    list.forEach((id, i) => {
+      const item = byId.get(id);
+      const name = item?.label ?? id;
+      const li = el('li');
+      const text = el('span', 'wheel-item');
+      text.append(el('span', 'item-label', name), el('span', 'item-name', item?.name ?? ''));
+      const move = (to: number): void => {
+        const next = [...list];
+        next.splice(i, 1);
+        next.splice(to, 0, id);
+        commit(next);
+      };
+      const up = keyed(button('↑', 'icon-small', () => move(i - 1), `Subir ${name}`), `up:${id}`);
+      const down = keyed(button('↓', 'icon-small', () => move(i + 1), `Bajar ${name}`), `down:${id}`);
+      const remove = keyed(button('×', 'icon-small', () => commit(list.filter((x) => x !== id)), `Quitar ${name}`), `remove:${id}`);
+      up.disabled = i === 0;
+      down.disabled = i === list.length - 1;
+      remove.disabled = list.length <= WHEEL_LIMITS.min;
+      li.append(text, up, down, remove);
+      ol.append(li);
+    });
+
+    const groups = new Map<string, WheelItem[]>();
+    for (const item of catalog) groups.set(item.group, [...(groups.get(item.group) ?? []), item]);
+    const catalogEl = el('div', 'catalog');
+    for (const [group, items] of groups) {
+      const fieldset = el('fieldset', 'catalog-group');
+      fieldset.append(el('legend', '', group));
+      for (const item of items) {
+        const label = el('label', 'catalog-item');
+        const box = keyed(el('input'), `check:${item.id}`);
+        box.type = 'checkbox';
+        const checked = list.includes(item.id);
+        box.checked = checked;
+        box.disabled = checked ? list.length <= WHEEL_LIMITS.min : list.length >= WHEEL_LIMITS.max;
+        box.addEventListener('change', () => commit(box.checked ? [...list, item.id] : list.filter((x) => x !== item.id)));
+        label.title = item.name;
+        label.append(box, el('span', 'item-label', item.label), el('span', 'item-name', item.name));
+        fieldset.append(label);
+      }
+      catalogEl.append(fieldset);
+    }
+
+    const defaults = degrees ? DEFAULT_DEGREE_TYPES : DEFAULT_WHEEL_CHORDS;
+    const reset = keyed(button('Restablecer esta rueda', 'secondary', () => commit(defaults)), 'reset');
+
+    this.editor.replaceChildren(top, hint, ol, catalogEl, reset);
+    if (focused) this.editor.querySelector<HTMLElement>(`[data-focus="${CSS.escape(focused)}"]`)?.focus();
+  }
+
+  // -------------------------------------------------------------------------
+  // Controles
+  // -------------------------------------------------------------------------
+
   private section(title: string): void {
-    this.panel.append(el('h3', 'panel-section', title));
+    this.body.append(el('h3', 'panel-section', title));
   }
 
   private field(label: string, control: HTMLElement, output?: HTMLElement): void {
@@ -291,15 +513,21 @@ export class SettingsPanel {
     top.append(caption);
     if (output) top.append(output);
     row.append(top, control);
-    this.panel.append(row);
+    this.body.append(row);
   }
 
   private select(label: string, options: Options, read: (s: Settings) => string, write: (value: string) => Patch): void {
     const select = el('select');
-    for (const [value, text] of options) {
+    let group: HTMLOptGroupElement | null = null;
+    for (const [value, text, groupName] of options) {
       const option = el('option', '', text);
       option.value = value;
-      select.append(option);
+      if (groupName && group?.label !== groupName) {
+        group = el('optgroup');
+        group.label = groupName;
+        select.append(group);
+      }
+      (groupName && group ? group : select).append(option);
     }
     select.addEventListener('change', () => this.onChange(write(select.value)));
     this.syncers.push((s) => (select.value = read(s)));
@@ -332,14 +560,17 @@ export class SettingsPanel {
     this.field(label, input, output);
   }
 
-  private segmented(label: string, options: Options, read: (s: Settings) => string, write: (value: string) => Patch): void {
+  private segmented(
+    label: string,
+    options: Options,
+    read: (s: Settings) => string,
+    write: (value: string) => Patch,
+  ): (readonly [string, HTMLButtonElement])[] {
     const group = el('div', 'segmented');
     group.setAttribute('role', 'radiogroup');
     const buttons = options.map(([value, text]) => {
-      const b = el('button', '', text);
-      b.type = 'button';
+      const b = button(text, '', () => this.onChange(write(value)));
       b.setAttribute('role', 'radio');
-      b.addEventListener('click', () => this.onChange(write(value)));
       group.append(b);
       return [value, b] as const;
     });
@@ -347,6 +578,7 @@ export class SettingsPanel {
       for (const [value, b] of buttons) b.setAttribute('aria-checked', String(read(s) === value));
     });
     this.field(label, group);
+    return buttons;
   }
 
   /** Muestras de color; el nombre del color elegido aparece junto a la etiqueta. */
@@ -360,13 +592,10 @@ export class SettingsPanel {
     group.setAttribute('role', 'radiogroup');
     const output = el('output', 'field-value');
     const buttons = colors.map((color) => {
-      const b = el('button', 'swatch');
-      b.type = 'button';
+      const b = button('', 'swatch', () => this.onChange(write(color.id)), color.name);
       b.setAttribute('role', 'radio');
-      b.setAttribute('aria-label', color.name);
       b.title = color.name;
       b.style.setProperty('--swatch', `rgb(${color.rgb.join(', ')})`);
-      b.addEventListener('click', () => this.onChange(write(color.id)));
       group.append(b);
       return [color, b] as const;
     });

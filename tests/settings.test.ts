@@ -9,12 +9,19 @@ describe('sanitizeSettings', () => {
   });
 
   it('conserva los valores válidos', () => {
-    const s = sanitizeSettings({ preset: 'organ', baseOctave: 3, mirror: false, scaleTonic: 7, scaleMode: 'minor' });
+    const s = sanitizeSettings({ preset: 'organ', baseOctave: 3, mirror: false, keyTonic: 7, keyScale: 'dorian' });
     expect(s.preset).toBe('organ');
     expect(s.baseOctave).toBe(3);
     expect(s.mirror).toBe(false);
-    expect(s.scaleTonic).toBe(7);
-    expect(s.scaleMode).toBe('minor');
+    expect(s.keyTonic).toBe(7);
+    expect(s.keyScale).toBe('dorian');
+  });
+
+  it('migra la escala resaltada de la versión anterior', () => {
+    const s = sanitizeSettings({ scaleTonic: 9, scaleMode: 'minor' });
+    expect(s.keyTonic).toBe(9);
+    expect(s.keyScale).toBe('aeolian');
+    expect(sanitizeSettings({ scaleTonic: 2, scaleMode: 'major' }).keyScale).toBe('major');
   });
 
   it('acota rangos y descarta valores inválidos', () => {
@@ -25,7 +32,8 @@ describe('sanitizeSettings', () => {
       delay: 'mucho',
       wheelSize: 5,
       controlPoint: 'codo',
-      scaleTonic: 12,
+      keyTonic: 12,
+      keyScale: 'marciana',
     });
     expect(s.preset).toBe(DEFAULT_SETTINGS.preset);
     expect(s.baseOctave).toBe(5);
@@ -33,7 +41,48 @@ describe('sanitizeSettings', () => {
     expect(s.delay).toBe(DEFAULT_SETTINGS.delay);
     expect(s.wheelSize).toBeLessThanOrEqual(0.36);
     expect(s.controlPoint).toBe(DEFAULT_SETTINGS.controlPoint);
-    expect(s.scaleTonic).toBeNull();
+    expect(s.keyTonic).toBeNull();
+    expect(s.keyScale).toBe('major');
+  });
+});
+
+describe('modo por grados', () => {
+  it('sin tonalidad elegida usa C', () => {
+    const s = sanitizeSettings({ harmonyMode: 'degrees', keyTonic: null, keyScale: 'major' });
+    expect(s.harmonyMode).toBe('degrees');
+    expect(s.keyTonic).toBe(0);
+  });
+
+  it('con una escala que no lo admite vuelve a libre', () => {
+    const s = sanitizeSettings({ harmonyMode: 'degrees', keyTonic: 4, keyScale: 'minorPentatonic' });
+    expect(s.harmonyMode).toBe('free');
+    expect(s.keyTonic).toBe(4);
+  });
+});
+
+describe('rueda de acordes a medida', () => {
+  it('conserva el orden elegido', () => {
+    const s = sanitizeSettings({ wheelChords: ['m7', 'maj7', '7', 'm7b5', '13'] });
+    expect(s.wheelChords).toEqual(['m7', 'maj7', '7', 'm7b5', '13']);
+  });
+
+  it('quita ids desconocidos y repetidos', () => {
+    const s = sanitizeSettings({ wheelChords: ['m7', 'm7', 'superacorde', 'maj7', 42] });
+    expect(s.wheelChords).toEqual(['m7', 'maj7']);
+  });
+
+  it('con menos de 2 acordes válidos vuelve la rueda por defecto', () => {
+    expect(sanitizeSettings({ wheelChords: ['m7'] }).wheelChords).toEqual(DEFAULT_SETTINGS.wheelChords);
+    expect(sanitizeSettings({ wheelChords: 'm7' }).wheelChords).toEqual(DEFAULT_SETTINGS.wheelChords);
+  });
+
+  it('como mucho 12', () => {
+    const many = ['maj', 'm', 'dim', 'aug', 'sus2', 'sus4', '5', '6', 'm6', 'maj7', '7', 'm7', 'm7b5', 'dim7'];
+    expect(sanitizeSettings({ wheelChords: many }).wheelChords).toHaveLength(12);
+  });
+
+  it('tipos por grados', () => {
+    expect(sanitizeSettings({ wheelDegreeTypes: ['seventh', 'triad', 'nada'] }).wheelDegreeTypes).toEqual(['seventh', 'triad']);
   });
 });
 

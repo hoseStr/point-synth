@@ -4,9 +4,10 @@
   "version": "0.1.0",
   "description": "Sintetizador de acordes controlado con las manos por webcam, con dos ruedas (raíz y calidad).",
   "type": "module",
+  "packageManager": "pnpm@11.1.1",
   "scripts": {
     "dev": "vite",
-    "build": "npm run typecheck && vite build",
+    "build": "pnpm typecheck && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

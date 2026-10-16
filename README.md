@@ -3,9 +3,15 @@
 Sintetizador de acordes que se toca con las manos frente a la webcam. Sobre el video hay dos ruedas:
 
 - **Rueda izquierda (índice izquierdo):** elige la **nota raíz** entre las 12 notas cromáticas.
-- **Rueda derecha (índice derecho):** elige la **calidad** del acorde: `maj`, `m`, `7`, `maj7`, `m7`, `dim`, `aug`, `sus4`.
+- **Rueda derecha (índice derecho):** elige la **calidad** del acorde. Por defecto: `maj`, `m`, `7`, `maj7`, `m7`, `dim`, `aug`, `sus4`. Se puede cambiar desde la app, entre 35 acordes.
 
 Cada dedo índice funciona como un apuntador: el cursor sigue su punta.
+
+También se puede tocar **por grados**: eliges una tonalidad (por ejemplo, G mayor). La rueda izquierda muestra entonces los grados I–vii, todo lo que suena queda dentro de la tonalidad, y la derecha elige tríada, 7ª, 9ª, sus2, sus4, add9, 6 o 5.
+
+Hay 17 sonidos: pads, supersaw, coro, pluck, metales, chiptune, campanas FM, teclado lo-fi, caja de música, flauta de aire y texturas ambient.
+
+📖 **[Guía de armonía y sonidos](docs/armonia.md):** intervalos, los 35 acordes, 21 escalas, acordes de cada escala, progresiones para practicar, cómo está hecho cada preset y cómo añadir más.
 
 La combinación suena en tiempo real como un pad sintetizado, con voice leading automático entre acordes. Todo corre en el navegador: el video nunca sale de tu equipo.
 
@@ -15,11 +21,11 @@ Está inspirado en el modo de ruedas de [GestureSynth](https://github.com/TChall
 
 ## Cómo correrlo
 
-Requisitos: Node.js 20.19 o superior (o 22.12+) y Chrome o Edge de escritorio.
+Requisitos: Node.js 20.19 o superior (o 22.12+), [pnpm](https://pnpm.io) y Chrome o Edge de escritorio. Si no tienes pnpm, actívalo con Corepack, que viene con Node: `corepack enable pnpm`.
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 Abre la URL que muestra Vite (normalmente <http://localhost:5173>). Pulsa **Empezar** y acepta el permiso de cámara. El sonido y la cámara solo arrancan después de ese clic, por la política de autoplay de los navegadores.
@@ -28,9 +34,9 @@ Otros comandos:
 
 | Comando | Qué hace |
 | --- | --- |
-| `npm run test` | Corre los tests de Vitest (teoría musical, ruedas, filtros, gestos, voces, ajustes). |
-| `npm run build` | Verifica tipos y genera el sitio estático en `dist/`. |
-| `npm run preview` | Sirve `dist/` localmente para probar el build. |
+| `pnpm test` | Corre los tests de Vitest (teoría musical, acordes, escalas, grados, ruedas, filtros, gestos, voces, audio, ajustes). |
+| `pnpm build` | Verifica tipos y genera el sitio estático en `dist/`. |
+| `pnpm preview` | Sirve `dist/` localmente para probar el build. |
 
 ## Cómo se toca
 
@@ -75,7 +81,7 @@ Con el mouse se toca igual. Mantén pulsado sobre G y arrastra a B y a C. Para p
 | `Espacio` | Pánico: silencia todo de inmediato, incluidos los ecos. |
 | `M` | Silenciar o activar el sonido. |
 | `F` | Pantalla completa. |
-| `[` y `]` | Preset anterior o siguiente. |
+| `[` y `]` | Preset anterior o siguiente (recorren los 17). |
 | `D` | Modo debug: 21 landmarks por mano, handedness, ángulo, segmento crudo frente al estable y medida → volumen. |
 | `Esc` | Cerrar el panel de ajustes. |
 
@@ -94,7 +100,7 @@ Están en el engranaje, arriba a la derecha, y se guardan en el navegador (`loca
 
 | Ajuste | Opciones |
 | --- | --- |
-| Preset | Warm Pad, Bright Saw, Strings, Electric Piano (FM), Organ |
+| Preset | 17 sonidos en 5 familias: clásicos (Warm Pad, Bright Saw, Strings, Electric Piano, Organ), pads modernos (Supersaw, Juno Pad, Choir), ataque y carácter (Pluck, Analog Brass, Chiptune), teclas y campanas FM (Glass Bells, Lo-fi Keys, Music Box) y texturas ambient (Air Flute, Dark Drone, Hall Pad). Ver la [guía](docs/armonia.md#6-sonidos). |
 | Octava base | 2 a 5 (por defecto 4: el acorde gira alrededor de C4) |
 | Reverb y delay | Mezcla de 0 a 100 % |
 | Suavizado | De mínimo retraso a máximo suavizado del tracking |
@@ -104,25 +110,27 @@ Están en el engranaje, arriba a la derecha, y se guardan en el navegador (`loca
 | Video en espejo | Activado por defecto, como un espejo real |
 | Tamaño, separación y opacidad de las ruedas | Por defecto, radio del 26 % del alto, centros al 24 % del ancho a cada lado del centro de la pantalla y 55 % de opacidad |
 | Color de cada rueda | 6 colores a elegir por separado para la rueda de notas y la de acordes: grafito (notas, por defecto), azul pizarra (acordes, por defecto), violeta, esmeralda, vino y ámbar. La lista está en `WHEEL_COLORS`, en `src/config.ts`. |
-| Resaltar escala | Marca con un punto las notas de una tonalidad (p. ej. G mayor). Es solo visual. |
+| Armonía → Modo | **Libre:** raíz cromática + acorde de la rueda. **Por grados:** grados de la tonalidad + tipo de acorde; todo suena dentro de la tonalidad. |
+| Armonía → Tonalidad y escala | 12 tónicas y 21 escalas (modos, menores armónica y melódica, pentatónicas, blues, simétricas, exóticas). En modo libre, la tonalidad marca sus notas con un punto y escribe los acordes con sus letras. Solo las 11 escalas de 7 notas compatibles admiten el modo por grados. |
+| Armonía → Editar rueda de acordes | Elige qué acordes (o tipos, en modo por grados) aparecen en la rueda derecha y en qué orden: de 2 a 12, entre los 35 del catálogo. Se guarda en el navegador. |
 
 ### Calibración
 
 Los umbrales de volumen están en `HANDS`, en `src/config.ts`. Con `D` puedes ver la medida cruda. En las pruebas con fotos reales, el índice estirado dio alrededor de 1.1 y recogido en un puño alrededor de 0.4. Si el volumen no llega a cero o a máximo, ajusta `indexExtension.curled` y `indexExtension.extended` (o `openness` y `pinch` para los otros modos).
 
-La lista de calidades de la rueda derecha es el array `WHEEL_QUALITIES` del mismo archivo. Se puede reordenar o ampliar con cualquier calidad definida en `QUALITY_DEFS` (`src/music/theory.ts`): `sus2`, `6`, `m6`, `dim7`, `m7b5` o `add9`.
+La rueda derecha se edita desde la app (Ajustes → Armonía). Las ruedas por defecto están en `DEFAULT_WHEEL_CHORDS` y `DEFAULT_DEGREE_TYPES` (`src/config.ts`). Para añadir acordes, escalas o presets nuevos, mira la sección «Cómo añadir cosas» de la [guía](docs/armonia.md#7-cómo-añadir-cosas).
 
 ## Desplegar
 
-`npm run build` genera un sitio estático en `dist/`. Usa rutas relativas, así que funciona tanto en la raíz de un dominio como en un subdirectorio. La cámara exige HTTPS; en `localhost` funciona sin él.
+`pnpm build` genera un sitio estático en `dist/`. Usa rutas relativas, así que funciona tanto en la raíz de un dominio como en un subdirectorio. La cámara exige HTTPS; en `localhost` funciona sin él.
 
 ### Vercel
 
 1. Importa el repositorio en <https://vercel.com/new>.
-2. Vercel detecta Vite solo: comando `npm run build`, carpeta de salida `dist`.
+2. Vercel detecta Vite y pnpm solo (por `pnpm-lock.yaml`): comando `pnpm build`, carpeta de salida `dist`.
 3. Despliega.
 
-Desde la terminal también funciona: `npx vercel`.
+Desde la terminal también funciona: `pnpm dlx vercel`.
 
 ### GitHub Pages
 
@@ -142,7 +150,10 @@ Sube el contenido de `dist/` (Netlify, Cloudflare Pages, S3…).
 src/
   main.ts              arranque, pantalla «Empezar», bucles de detección y render
   config.ts            notas, calidades de la rueda, geometría, umbrales y colores
-  music/theory.ts      intervalos, nombres, ortografía, escalas y voice leading (puro)
+  music/chords.ts      catálogo de 35 acordes (puro)
+  music/scales.ts      catálogo de 21 escalas (puro)
+  music/diatonic.ts    acordes por grado y números romanos (puro)
+  music/theory.ts      nombres, ortografía (también en tonalidad) y voice leading (puro)
   input/wheel.ts       geometría de ruedas, ángulo → segmento e histéresis (puro)
   input/controller.ts  manos → raíz, calidad y volumen; OFF, ausencia y pánico (puro)
   input/gestures.ts    extensión del índice, centro de palma, apertura y pinza (puro)
@@ -154,11 +165,13 @@ src/
   audio/allocate.ts    reparto de notas entre voces al cambiar de acorde (puro)
   audio/engine.ts      bus, delay, reverb, limitador, volumen, mute y pánico
   audio/voice.ts       voz: osciladores desafinados, filtro y ADSR
-  audio/presets.ts     los 5 presets
-  audio/impulse.ts     impulso de reverb generado por código
+  audio/presets.ts     los 17 presets
+  audio/chain.ts       efectos por preset: formantes, saturación, trémolo, chorus
+  audio/waves.ts       onda de pulso, ruido y curva de saturación (puro)
+  audio/impulse.ts     impulsos de reverb generados por código (sala y hall)
   ui/render.ts         dibujo de ruedas, cursores y debug en canvas
   ui/hud.ts            acorde, estado, medidor y avisos
-  ui/settings.ts       modelo de ajustes, persistencia y panel
+  ui/settings.ts       modelo de ajustes, persistencia, panel y editor de la rueda
 tests/                 Vitest
 ```
 

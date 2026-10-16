@@ -5,6 +5,8 @@ import type { WheelGeometry } from '../input/wheel';
 export interface WheelView {
   readonly geometry: WheelGeometry;
   readonly labels: readonly string[];
+  /** Segunda línea opcional bajo cada etiqueta (p. ej. la nota bajo el número romano). */
+  readonly sublabels?: readonly string[];
   /** Color RGB del cuerpo de la rueda. */
   readonly tint: readonly [number, number, number];
   readonly opacity: number;
@@ -41,6 +43,16 @@ const HAND_CONNECTIONS: readonly [number, number][] = [
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 const TAU = Math.PI * 2;
+
+/**
+ * Tamaño de letra (≤ `size`) con el que el texto más ancho de `texts` cabe en
+ * `room` píxeles. Mide en negrita, el caso más ancho.
+ */
+function fitFontSize(c: CanvasRenderingContext2D, texts: readonly string[], size: number, room: number, weight = 600): number {
+  c.font = `${weight} ${size}px ${FONT}`;
+  const widest = Math.max(1, ...texts.map((t) => c.measureText(t).width));
+  return Math.max(9, Math.min(size, Math.floor((size * room) / widest)));
+}
 
 /** Ángulo de la rueda (0 = arriba, horario, en grados) a ángulo de canvas en radianes. */
 function toCanvasAngle(deg: number): number {
@@ -128,8 +140,11 @@ export class Renderer {
     c.lineWidth = 2;
     c.stroke();
 
-    // Etiquetas.
-    const fontSize = Math.max(11, Math.round(r * 0.078));
+    // Etiquetas: el tamaño se ajusta para que la más larga quepa en su segmento.
+    const baseSize = Math.max(11, Math.round(r * 0.078));
+    const lr = r * WHEEL.labelRatio;
+    const room = Math.min(2 * lr * Math.sin(Math.PI / n), r - ri) * 0.82;
+    const fontSize = fitFontSize(c, w.labels, baseSize * 1.18, room) / 1.18;
     c.textAlign = 'center';
     c.textBaseline = 'middle';
     c.save();
@@ -137,11 +152,21 @@ export class Renderer {
     c.shadowBlur = 3;
     for (let i = 0; i < n; i++) {
       const a = toCanvasAngle(i * step);
-      const lr = r * WHEEL.labelRatio;
       const isActive = i === w.active;
-      c.font = `${isActive ? 600 : 400} ${isActive ? Math.round(fontSize * 1.18) : fontSize}px ${FONT}`;
+      const size = Math.round(isActive ? fontSize * 1.18 : fontSize);
+      const x = cx + Math.cos(a) * lr;
+      const y = cy + Math.sin(a) * lr;
+      c.font = `${isActive ? 600 : 400} ${size}px ${FONT}`;
       c.fillStyle = COLORS.label;
-      c.fillText(w.labels[i]!, cx + Math.cos(a) * lr, cy + Math.sin(a) * lr);
+      const sub = w.sublabels?.[i];
+      if (sub) {
+        c.fillText(w.labels[i]!, x, y - size * 0.42);
+        c.font = `400 ${Math.round(size * 0.78)}px ${FONT}`;
+        c.fillStyle = COLORS.sublabel;
+        c.fillText(sub, x, y + size * 0.6);
+      } else {
+        c.fillText(w.labels[i]!, x, y);
+      }
       if (w.dots?.[i]) {
         // Entre la etiqueta y el centro: visible aunque el borde de la pantalla corte la rueda.
         const dr = r * 0.53;
@@ -167,7 +192,7 @@ export class Renderer {
       c.stroke();
       c.restore();
     }
-    c.font = `500 ${fontSize}px ${FONT}`;
+    c.font = `500 ${fitFontSize(c, [w.centerText], baseSize, ri * 1.6, 500)}px ${FONT}`;
     c.fillStyle = COLORS.label;
     c.fillText(w.centerText, cx, cy);
   }

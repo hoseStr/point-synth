@@ -84,9 +84,16 @@ export class SelectionStabilizer {
   private pendingSince = 0;
 
   constructor(
-    private readonly count: number,
+    private count: number,
     private readonly opts: StabilizerOptions,
   ) {}
+
+  /** Cambia la cantidad de segmentos (la rueda cambió de contenido) y empieza de cero. */
+  setSegmentCount(count: number): void {
+    if (count === this.count) return;
+    this.count = count;
+    this.reset();
+  }
 
   reset(): void {
     this.stable = NONE;

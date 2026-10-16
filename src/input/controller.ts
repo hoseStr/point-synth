@@ -76,6 +76,11 @@ export class ChordController {
     if (this.root !== null) this.panicRoot = this.root;
   }
 
+  /** Fija la calidad, p. ej. al reordenar la rueda para conservar el acorde elegido. */
+  setQuality(index: number): void {
+    this.quality = index;
+  }
+
   get currentQuality(): number {
     return this.quality;
   }

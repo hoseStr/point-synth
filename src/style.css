@@ -297,8 +297,21 @@ body {
   font: inherit;
 }
 
+/*
+ * Los títulos de grupo («Clásicos», «Modos de la escala mayor»…) necesitan su
+ * propio fondo: sin él, Windows los pinta como barras blancas en la lista.
+ */
+.field select optgroup {
+  background: #1a1c21;
+  color: var(--faint);
+  font-style: normal;
+  font-weight: 600;
+}
+
 .field select option {
   background: #1a1c21;
+  color: var(--text);
+  font-weight: 400;
 }
 
 .field input[type='range'] {
@@ -404,6 +417,161 @@ body {
 
 .panel-footer {
   margin-top: 14px;
+}
+
+.panel-note {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--faint);
+}
+
+button.edit-wheel {
+  margin-top: 0;
+}
+
+/* Editor de la rueda de acordes */
+.editor-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 8px;
+}
+
+.editor-back {
+  flex: none;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.editor-back:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.editor-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.wheel-list {
+  display: grid;
+  /* Sin esto la columna toma el ancho de los nombres largos y la fila se sale del panel. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+  counter-reset: wheel;
+}
+
+.wheel-list li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 4px 4px 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  counter-increment: wheel;
+}
+
+.wheel-list li::before {
+  content: counter(wheel);
+  flex: none;
+  width: 20px;
+  font-size: 12px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.wheel-item {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.item-label {
+  flex: none;
+  min-width: 56px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.item-name {
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--faint);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.icon-small {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.icon-small:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
+.icon-small:disabled {
+  opacity: 0.28;
+  cursor: default;
+}
+
+.catalog-group {
+  margin: 0 0 12px;
+  padding: 0;
+  border: none;
+}
+
+.catalog-group legend {
+  margin-bottom: 4px;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.catalog-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.catalog-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.catalog-item input {
+  flex: none;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.catalog-item:has(input:disabled) {
+  opacity: 0.45;
+  cursor: default;
 }
 
 /* Medidor de volumen */

@@ -20,6 +20,25 @@ export function holdAt(param: AudioParam, t: number): void {
   }
 }
 
+/** Recursos compartidos que el motor presta a las voces (se crean una sola vez). */
+export interface VoiceResources {
+  /** Onda de pulso del ancho dado. */
+  pulseWave(width: number): PeriodicWave;
+  /** Buffer de ruido en bucle. */
+  noiseBuffer(color: 'white' | 'pink'): AudioBuffer;
+  /** LFO compartido para el corte del filtro, si el preset lo usa. */
+  readonly filterLfo: AudioNode | null;
+}
+
+/** Desconecta sin fallar si la conexión ya no existe (p. ej. la cadena se liberó antes). */
+function safeDisconnect(from: AudioNode, to: AudioParam): void {
+  try {
+    from.disconnect(to);
+  } catch {
+    // Ya estaba desconectado.
+  }
+}
+
 export class Voice {
   /** Nota con la compuerta abierta; null si la voz está libre o en release. */
   note: number | null = null;
@@ -34,12 +53,15 @@ export class Voice {
   private readonly trim: GainNode;
   private readonly modulator: OscillatorNode | null = null;
   private readonly modDepth: GainNode | null = null;
+  private readonly noise: AudioBufferSourceNode | null = null;
+  private readonly filterLfo: AudioNode | null;
 
   constructor(
     private readonly ctx: BaseAudioContext,
     private readonly preset: PresetDef,
     destination: AudioNode,
     private readonly vibrato: AudioNode | null,
+    resources: VoiceResources,
   ) {
     const t = ctx.currentTime;
     this.filter = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: preset.filter.cutoff, Q: preset.filter.q });
@@ -55,14 +77,32 @@ export class Voice {
     }
 
     for (const spec of preset.oscillators) {
-      const osc = new OscillatorNode(ctx, { type: spec.type, frequency: 440 * spec.ratio, detune: spec.detune });
+      const base = { frequency: 440 * spec.ratio, detune: spec.detune };
+      const osc =
+        spec.pulseWidth === undefined
+          ? new OscillatorNode(ctx, { ...base, type: spec.type })
+          : new OscillatorNode(ctx, { ...base, periodicWave: resources.pulseWave(spec.pulseWidth) });
       const gain = new GainNode(ctx, { gain: spec.gain });
-      osc.connect(gain).connect(this.filter);
+      osc.connect(gain);
+      if (spec.pan) gain.connect(new StereoPannerNode(ctx, { pan: spec.pan })).connect(this.filter);
+      else gain.connect(this.filter);
       if (vibrato) vibrato.connect(osc.detune);
       if (this.modDepth) this.modDepth.connect(osc.frequency);
       osc.start(t);
       this.oscillators.push(osc);
     }
+
+    if (preset.noise) {
+      // Ruido en bucle, filtrado en banda; empieza en un punto al azar para que las voces no suenen idénticas.
+      const buffer = resources.noiseBuffer(preset.noise.color);
+      this.noise = new AudioBufferSourceNode(ctx, { buffer, loop: true });
+      const band = new BiquadFilterNode(ctx, { type: 'bandpass', frequency: preset.noise.bandHz, Q: preset.noise.q });
+      this.noise.connect(band).connect(new GainNode(ctx, { gain: preset.noise.gain })).connect(this.filter);
+      this.noise.start(t, Math.random() * buffer.duration);
+    }
+
+    this.filterLfo = resources.filterLfo;
+    this.filterLfo?.connect(this.filter.frequency);
   }
 
   /** Abre la compuerta con una nota nueva (ADSR completo). */
@@ -118,16 +158,19 @@ export class Voice {
     if (first) {
       first.onended = () => {
         for (const osc of this.oscillators) {
-          if (this.vibrato) this.vibrato.disconnect(osc.detune);
+          if (this.vibrato) safeDisconnect(this.vibrato, osc.detune);
           osc.disconnect();
         }
+        if (this.filterLfo) safeDisconnect(this.filterLfo, this.filter.frequency);
         this.modulator?.disconnect();
         this.modDepth?.disconnect();
+        this.noise?.disconnect();
         this.trim.disconnect();
       };
     }
     for (const osc of this.oscillators) osc.stop(stopAt);
     this.modulator?.stop(stopAt);
+    this.noise?.stop(stopAt);
   }
 
   private tune(note: number, t: number, glide: number): void {

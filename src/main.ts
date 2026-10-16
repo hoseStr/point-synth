@@ -1,7 +1,7 @@
 import './style.css';
 import { AudioEngine } from './audio/engine';
 import { PRESETS, PRESET_IDS } from './audio/presets';
-import { COLORS, HANDS, POINTER_VOLUME, ROOT_LABELS, WHEEL, WHEEL_COLORS, WHEEL_QUALITIES, wheelColorRgb } from './config';
+import { COLORS, HANDS, POINTER_VOLUME, ROOT_LABELS, TONIC_NAMES, WHEEL, WHEEL_COLORS, wheelColorRgb } from './config';
 import { assignHands } from './input/assign';
 import { ChordController, type ControlState, type LeftInput, type RightInput } from './input/controller';
 import { videoToScreen, type Size } from './input/coords';
@@ -16,14 +16,18 @@ import {
   type WheelLayout,
   type WheelSelection,
 } from './input/wheel';
+import { MAX_VOICING_NOTES } from './music/chords';
+import { DEGREE_TYPES, degreeLabels, diatonicChord } from './music/diatonic';
 import {
   chordName,
   chordNotes,
-  chordPitchClasses,
   formatChordName,
   formatNote,
+  keySpelling,
+  qualityLabel,
   scalePitchClasses,
   voiceChord,
+  type KeySpelling,
   type QualityId,
 } from './music/theory';
 import { OneEuroFilter, OneEuroFilter2D, cursorFilterParams, volumeFilterParams } from './tracking/filters';
@@ -32,7 +36,6 @@ import { Hud } from './ui/hud';
 import { Renderer, type CursorView, type DebugHandView, type WheelView } from './ui/render';
 import { SettingsPanel, loadSettings, saveSettings, type Settings } from './ui/settings';
 
-const MAX_CHORD_NOTES = Math.max(...WHEEL_QUALITIES.map((q) => chordPitchClasses(0, q).length));
 const SILENT_VOLUME = 0.04;
 
 function byId<T extends HTMLElement>(id: string): T {
@@ -52,8 +55,8 @@ let layout: WheelLayout = computeLayout();
 const pointer = new PointerInput(canvas, () => layout);
 const controller = new ChordController(HANDS.lostReleaseMs);
 const panel = new SettingsPanel(byId('settings-panel'), byId<HTMLButtonElement>('settings-toggle'), settings, updateSettings, {
-  presets: PRESET_IDS.map((id) => ({ id, name: PRESETS[id].name })),
-  noteNames: ROOT_LABELS,
+  presets: PRESET_IDS.map((id) => ({ id, name: PRESETS[id].name, group: PRESETS[id].group })),
+  tonicNames: TONIC_NAMES,
   wheelSize: { min: WHEEL.minSize, max: WHEEL.maxSize },
   wheelSpread: { min: WHEEL.minSpread, max: WHEEL.maxSpread },
   wheelColors: WHEEL_COLORS,
@@ -66,11 +69,11 @@ let tracker: HandTracker | null = null;
 let debug = false;
 
 /** Acorde que suena ahora. */
-let current: { key: string; root: number; quality: QualityId } | null = null;
+let current: { key: string; choice: ChordChoice } | null = null;
 /** Último voicing, para el voice leading del siguiente acorde (sobrevive a los silencios). */
 let lastVoicing: readonly number[] | null = null;
 let lastVolume = 0;
-let scaleDots = computeScaleDots();
+let harmony = computeHarmony();
 
 function computeLayout(): WheelLayout {
   return layoutWheels(window.innerWidth, window.innerHeight, {
@@ -80,10 +83,67 @@ function computeLayout(): WheelLayout {
   });
 }
 
-function computeScaleDots(): boolean[] | undefined {
-  if (settings.scaleTonic === null) return undefined;
-  const pcs = new Set(scalePitchClasses(settings.scaleTonic, settings.scaleMode));
-  return ROOT_LABELS.map((_, i) => pcs.has(i));
+// ---------------------------------------------------------------------------
+// Armonía: qué muestran las ruedas y qué acorde suena
+// ---------------------------------------------------------------------------
+
+/** Contenido de las ruedas según el modo (libre o por grados) y la tonalidad. */
+interface Harmony {
+  readonly degrees: boolean;
+  readonly rootLabels: readonly string[];
+  /** Nota de cada grado, bajo su número romano (solo por grados). */
+  readonly rootSublabels?: readonly string[];
+  readonly qualityLabels: readonly string[];
+  /** Notas de la escala marcadas en la rueda cromática (solo en modo libre con tonalidad). */
+  readonly dots?: readonly boolean[];
+  /** Ortografía de la tonalidad elegida: los acordes se escriben con sus letras. */
+  readonly key: KeySpelling | null;
+}
+
+function computeHarmony(): Harmony {
+  const { keyTonic, keyScale } = settings;
+  const key = keyTonic === null ? null : keySpelling(keyTonic, keyScale);
+  if (settings.harmonyMode === 'degrees' && keyTonic !== null) {
+    const labels = degreeLabels(keyTonic, keyScale);
+    return {
+      degrees: true,
+      rootLabels: labels.map((l) => l.numeral),
+      rootSublabels: labels.map((l) => l.note),
+      qualityLabels: settings.wheelDegreeTypes.map((t) => DEGREE_TYPES[t].label),
+      key,
+    };
+  }
+  const inScale = keyTonic === null ? null : new Set(scalePitchClasses(keyTonic, keyScale));
+  return {
+    degrees: false,
+    rootLabels: ROOT_LABELS,
+    qualityLabels: settings.wheelChords.map(qualityLabel),
+    dots: inScale ? ROOT_LABELS.map((_, i) => inScale.has(i)) : undefined,
+    key,
+  };
+}
+
+interface ChordChoice {
+  readonly root: number;
+  readonly quality: QualityId;
+  /** Número romano (solo por grados). */
+  readonly numeral: string | null;
+}
+
+/** Traduce los segmentos elegidos en las dos ruedas al acorde que debe sonar. */
+function resolveChord(rootIndex: number, qualityIndex: number): ChordChoice {
+  if (harmony.degrees && settings.keyTonic !== null) {
+    const types = settings.wheelDegreeTypes;
+    const c = diatonicChord(settings.keyTonic, settings.keyScale, rootIndex, types[qualityIndex] ?? types[0]!);
+    return { root: c.root, quality: c.quality, numeral: c.numeral };
+  }
+  const chords = settings.wheelChords;
+  return { root: rootIndex, quality: chords[qualityIndex] ?? chords[0]!, numeral: null };
+}
+
+/** Id de lo que hay en el segmento `index` de la rueda derecha con estos ajustes. */
+function qualityIdAt(s: Settings, index: number): string | undefined {
+  return (s.harmonyMode === 'degrees' ? s.wheelDegreeTypes : s.wheelChords)[index];
 }
 
 function viewSize(): Size {
@@ -126,8 +186,8 @@ function createHand(side: Side, segments: number): TrackedHand {
 }
 
 const hands: Record<Side, TrackedHand> = {
-  left: createHand('left', ROOT_LABELS.length),
-  right: createHand('right', WHEEL_QUALITIES.length),
+  left: createHand('left', harmony.rootLabels.length),
+  right: createHand('right', harmony.qualityLabels.length),
 };
 /** Manos detectadas que no se asignaron a ninguna rueda (solo para debug). */
 let unassigned: HandObservation[] = [];
@@ -251,20 +311,22 @@ function scheduleDetection(): void {
 // Estado musical → audio y textos
 // ---------------------------------------------------------------------------
 
-function showChord(root: number, quality: QualityId): void {
-  hud.setChord(formatChordName(chordName(root, quality)), chordNotes(root, quality).map(formatNote).join(' – '));
+function showChord(choice: ChordChoice): void {
+  const { root, quality, numeral } = choice;
+  const notes = chordNotes(root, quality, harmony.key).map(formatNote).join(' – ');
+  hud.setChord(formatChordName(chordName(root, quality, harmony.key)), numeral ? `${numeral} · ${notes}` : notes);
 }
 
 function applyState(state: ControlState): void {
-  const quality = WHEEL_QUALITIES[state.quality]!;
   if (state.root !== null) {
-    const key = `${state.root}|${quality}|${settings.baseOctave}`;
+    const choice = resolveChord(state.root, state.quality);
+    const key = `${choice.root}|${choice.quality}|${settings.baseOctave}`;
     if (current?.key !== key) {
-      const voicing = voiceChord(state.root, quality, lastVoicing, settings.baseOctave);
+      const voicing = voiceChord(choice.root, choice.quality, lastVoicing, settings.baseOctave);
       engine?.setChord(voicing.bass, voicing.notes);
       lastVoicing = voicing.notes;
-      current = { key, root: state.root, quality };
-      showChord(state.root, quality);
+      current = { key, choice };
+      showChord(choice);
     }
   } else if (current) {
     engine?.release();
@@ -300,7 +362,7 @@ function debugViews(): DebugHandView[] {
   for (const h of [hands.left, hands.right]) {
     const obs = h.observation;
     if (!h.present || !obs) continue;
-    const labels = h.side === 'left' ? ROOT_LABELS : WHEEL_QUALITIES;
+    const labels = h.side === 'left' ? harmony.rootLabels : harmony.qualityLabels;
     const lines = [
       `${h.side === 'left' ? 'Rueda izq.' : 'Rueda der.'} · ${obs.handedness} ${obs.score.toFixed(2)}`,
       `ángulo ${h.stabilizer.angle.toFixed(0)}°`,
@@ -337,7 +399,7 @@ function frame(now: number): void {
   const lp = pointer.read('left');
   const lh = hands.left;
   if (lp) {
-    leftSel = rawSelection(layout.left, lp.x, lp.y, ROOT_LABELS.length);
+    leftSel = rawSelection(layout.left, lp.x, lp.y, harmony.rootLabels.length);
     left = { selection: leftSel, volume: POINTER_VOLUME };
     cursors.push({ x: lp.x, y: lp.y, wheel: layout.left, color: COLORS.cursorLeft });
   } else if (lh.present && lh.cursor) {
@@ -349,7 +411,7 @@ function frame(now: number): void {
   const rp = pointer.read('right');
   const rh = hands.right;
   if (rp) {
-    rightSel = rawSelection(layout.right, rp.x, rp.y, WHEEL_QUALITIES.length);
+    rightSel = rawSelection(layout.right, rp.x, rp.y, harmony.qualityLabels.length);
     right = { selection: rightSel };
     cursors.push({ x: rp.x, y: rp.y, wheel: layout.right, color: COLORS.cursorRight });
   } else if (rh.present && rh.cursor) {
@@ -373,22 +435,23 @@ function frame(now: number): void {
   const wheels: WheelView[] = [
     {
       geometry: layout.left,
-      labels: ROOT_LABELS,
+      labels: harmony.rootLabels,
+      sublabels: harmony.rootSublabels,
       tint: wheelColorRgb(settings.rootWheelColor),
       opacity: settings.wheelOpacity,
       active: state.root,
       centerActive: leftSel.kind === 'center',
       centerText: 'OFF',
-      dots: scaleDots,
+      dots: harmony.dots,
     },
     {
       geometry: layout.right,
-      labels: WHEEL_QUALITIES,
+      labels: harmony.qualityLabels,
       tint: wheelColorRgb(settings.qualityWheelColor),
       opacity: settings.wheelOpacity,
       active: state.quality,
       centerActive: rightSel.kind === 'center',
-      centerText: WHEEL_QUALITIES[state.quality]!,
+      centerText: harmony.qualityLabels[state.quality] ?? '',
     },
   ];
   renderer.draw(wheels, cursors, debug ? debugViews() : null);
@@ -406,7 +469,7 @@ function startAudio(): void {
     preset: settings.preset,
     reverb: settings.reverb,
     delay: settings.delay,
-    maxChordNotes: MAX_CHORD_NOTES,
+    maxChordNotes: MAX_VOICING_NOTES,
   });
   void engine.resume();
 }
@@ -488,7 +551,15 @@ function updateSettings(patch: Partial<Settings>): void {
   }
   if (settings.baseOctave !== prev.baseOctave) lastVoicing = null;
   if (settings.wheelSize !== prev.wheelSize || settings.wheelSpread !== prev.wheelSpread) layout = computeLayout();
-  if (settings.scaleTonic !== prev.scaleTonic || settings.scaleMode !== prev.scaleMode) scaleDots = computeScaleDots();
+  if (
+    settings.harmonyMode !== prev.harmonyMode ||
+    settings.keyTonic !== prev.keyTonic ||
+    settings.keyScale !== prev.keyScale ||
+    settings.wheelChords !== prev.wheelChords ||
+    settings.wheelDegreeTypes !== prev.wheelDegreeTypes
+  ) {
+    updateHarmony(prev);
+  }
   for (const h of [hands.left, hands.right]) {
     if (settings.smoothing !== prev.smoothing) {
       h.cursorFilter.params = cursorFilterParams(settings.smoothing);
@@ -502,6 +573,25 @@ function updateSettings(patch: Partial<Settings>): void {
   }
   video.classList.toggle('is-mirrored', settings.mirror);
   panel.sync(settings);
+}
+
+/** Aplica un cambio de modo, tonalidad, escala o lista de acordes de la rueda. */
+function updateHarmony(prev: Settings): void {
+  const prevQuality = qualityIdAt(prev, controller.currentQuality);
+  harmony = computeHarmony();
+  // En otro modo u otra tonalidad, el segmento de la rueda izquierda significa otra cosa.
+  const rootsChanged =
+    prev.harmonyMode !== settings.harmonyMode ||
+    (settings.harmonyMode === 'degrees' && (prev.keyTonic !== settings.keyTonic || prev.keyScale !== settings.keyScale));
+  if (rootsChanged) controller.releaseLeft();
+  // Si el acorde elegido sigue en la rueda (reordenada), se conserva.
+  const list = settings.harmonyMode === 'degrees' ? settings.wheelDegreeTypes : settings.wheelChords;
+  const kept = prevQuality === undefined ? -1 : (list as readonly string[]).indexOf(prevQuality);
+  controller.setQuality(kept >= 0 ? kept : 0);
+  hands.left.stabilizer.setSegmentCount(harmony.rootLabels.length);
+  hands.right.stabilizer.setSegmentCount(harmony.qualityLabels.length);
+  // Fuerza a reescribir (y, si cambió, a revoicear) el acorde con la nueva tonalidad.
+  if (current) current = { ...current, key: '' };
 }
 
 function cyclePreset(direction: 1 | -1): void {
